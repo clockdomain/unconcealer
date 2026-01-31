@@ -1,0 +1,20 @@
+[package]
+name = "test_fw"
+version = "0.1.0"
+edition = "2021"
+authors = ["clockdomain <bookofenoch68@outlook.com>"]
+description = "Minimal Cortex-M4 test firmware for unconcealer"
+
+[dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "0.2"
+
+[profile.dev]
+opt-level = "s"
+debug = true
+
+[profile.release]
+opt-level = "s"
+debug = true
+lto = true

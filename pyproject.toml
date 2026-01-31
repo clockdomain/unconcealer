@@ -70,6 +70,9 @@ packages = ["src/unconcealer"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests (require QEMU)",
+]
 
 [tool.ruff]
 line-length = 100
