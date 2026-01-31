@@ -446,3 +446,347 @@ class TestSessionInfo:
         )
         assert info.session is mock_session
         assert info.is_active is True
+
+
+class TestSessionManagerArchitecture:
+    """Test SessionManager architecture features."""
+
+    @pytest.mark.asyncio
+    async def test_session_detects_architecture(self, tmp_path: Path) -> None:
+        """Test that sessions detect architecture from cpu/machine."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=AsyncMock(),
+        ):
+            info = await manager.start_session(
+                str(elf_file), cpu="cortex-m4", machine="netduinoplus2"
+            )
+            assert info.architecture == "cortex-m4"
+
+    @pytest.mark.asyncio
+    async def test_session_detects_riscv_architecture(self, tmp_path: Path) -> None:
+        """Test RISC-V architecture detection."""
+        elf_file = tmp_path / "riscv.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=AsyncMock(),
+        ):
+            info = await manager.start_session(
+                str(elf_file), cpu="rv32", machine="sifive_e"
+            )
+            assert info.architecture == "riscv32"
+
+    @pytest.mark.asyncio
+    async def test_get_architecture_no_session(self) -> None:
+        """Test get_architecture with no active session."""
+        manager = SessionManager()
+        arch = manager.get_architecture()
+        assert arch is None
+
+    @pytest.mark.asyncio
+    async def test_get_architecture_with_session(self, tmp_path: Path) -> None:
+        """Test get_architecture with active session."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=AsyncMock(),
+        ):
+            await manager.start_session(str(elf_file), cpu="cortex-m3")
+            arch = manager.get_architecture()
+            assert arch is not None
+            # cortex-m3 maps to CortexMTarget which has name "cortex-m"
+            assert "cortex" in arch.name.lower()
+
+    @pytest.mark.asyncio
+    async def test_get_current_architecture(self, tmp_path: Path) -> None:
+        """Test get_current_architecture."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=AsyncMock(),
+        ):
+            await manager.start_session(str(elf_file), cpu="cortex-m0")
+            arch = manager.get_current_architecture()
+            assert arch is not None
+            assert "cortex" in arch.name.lower() or "m0" in arch.name.lower()
+
+
+class TestArchitectureMcpTools:
+    """Test architecture-specific MCP tools."""
+
+    def test_architecture_tools_exist(self) -> None:
+        """Test that architecture tools are defined."""
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        tool_names = [t["name"] for t in server._tools]
+
+        assert "read_fault_registers" in tool_names
+        assert "read_exception_frame" in tool_names
+        assert "check_interrupt_priorities" in tool_names
+        assert "show_memory_protection" in tool_names
+        assert "analyze_crash" in tool_names
+
+    def test_architecture_tools_have_schemas(self) -> None:
+        """Test architecture tools have proper schemas."""
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        arch_tools = [
+            "read_fault_registers",
+            "read_exception_frame",
+            "check_interrupt_priorities",
+            "show_memory_protection",
+            "analyze_crash",
+        ]
+
+        for tool in server._tools:
+            if tool["name"] in arch_tools:
+                assert "description" in tool
+                assert "inputSchema" in tool
+                # All should have optional session parameter
+                props = tool["inputSchema"].get("properties", {})
+                assert "session" in props or len(props) == 0
+
+    @pytest.mark.asyncio
+    async def test_read_fault_registers_no_session(self) -> None:
+        """Test read_fault_registers without session."""
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "read_fault_registers", "arguments": {}},
+        }
+
+        response = await server._handle_request(request)
+
+        assert response["result"]["is_error"] is True
+        assert "No active session" in response["result"]["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_read_fault_registers_with_session(self, tmp_path: Path) -> None:
+        """Test read_fault_registers with mocked session."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        # Create mock session with required methods
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        mock_session.read_memory = AsyncMock(
+            side_effect=[
+                bytes([0x02, 0x00, 0x00, 0x00]),  # CFSR
+                bytes([0x00, 0x00, 0x00, 0x00]),  # HFSR
+                bytes([0x00, 0x00, 0x00, 0x20]),  # MMFAR
+                bytes([0x00, 0x00, 0x00, 0x00]),  # BFAR
+            ]
+        )
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=mock_session,
+        ):
+            # Start session
+            await manager.start_session(str(elf_file), cpu="cortex-m3")
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "read_fault_registers", "arguments": {}},
+            }
+
+            response = await server._handle_request(request)
+
+            assert "is_error" not in response["result"]
+            text = response["result"]["content"][0]["text"]
+            assert "Fault Type:" in text
+
+    @pytest.mark.asyncio
+    async def test_read_exception_frame_with_session(self, tmp_path: Path) -> None:
+        """Test read_exception_frame with mocked session."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        mock_session.read_registers = AsyncMock(return_value={"sp": 0x20001000})
+        # Frame data: R0-R3, R12, LR, PC, xPSR (32 bytes)
+        frame_data = (
+            b"\x00\x00\x00\x00"  # R0
+            b"\x01\x00\x00\x00"  # R1
+            b"\x02\x00\x00\x00"  # R2
+            b"\x03\x00\x00\x00"  # R3
+            b"\x0c\x00\x00\x00"  # R12
+            b"\x00\x10\x00\x08"  # LR
+            b"\x34\x12\x00\x08"  # PC
+            b"\x00\x00\x00\x01"  # xPSR
+        )
+        mock_session.read_memory = AsyncMock(return_value=frame_data)
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=mock_session,
+        ):
+            await manager.start_session(str(elf_file), cpu="cortex-m3")
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "read_exception_frame", "arguments": {}},
+            }
+
+            response = await server._handle_request(request)
+
+            assert "is_error" not in response["result"]
+            text = response["result"]["content"][0]["text"]
+            assert "Exception Frame" in text
+            assert "Return Address" in text
+
+    @pytest.mark.asyncio
+    async def test_check_interrupt_priorities_with_session(
+        self, tmp_path: Path
+    ) -> None:
+        """Test check_interrupt_priorities with mocked session."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        # NVIC reads for Cortex-M
+        mock_session.read_memory = AsyncMock(
+            return_value=bytes([0xFF, 0x00, 0x00, 0x00])
+        )
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=mock_session,
+        ):
+            await manager.start_session(str(elf_file), cpu="cortex-m3")
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "check_interrupt_priorities", "arguments": {}},
+            }
+
+            response = await server._handle_request(request)
+
+            assert "is_error" not in response["result"]
+            text = response["result"]["content"][0]["text"]
+            assert "Interrupt Configuration" in text
+
+    @pytest.mark.asyncio
+    async def test_show_memory_protection_with_session(self, tmp_path: Path) -> None:
+        """Test show_memory_protection with mocked session."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        # MPU TYPE and CTRL registers
+        mock_session.read_memory = AsyncMock(
+            return_value=bytes([0x00, 0x08, 0x00, 0x00])
+        )
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=mock_session,
+        ):
+            await manager.start_session(str(elf_file), cpu="cortex-m3")
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "show_memory_protection", "arguments": {}},
+            }
+
+            response = await server._handle_request(request)
+
+            assert "is_error" not in response["result"]
+            text = response["result"]["content"][0]["text"]
+            assert "Memory Protection" in text
+
+    @pytest.mark.asyncio
+    async def test_analyze_crash_with_session(self, tmp_path: Path) -> None:
+        """Test analyze_crash comprehensive tool."""
+        elf_file = tmp_path / "test.elf"
+        elf_file.touch()
+
+        manager = SessionManager()
+        server = StdioMcpServer(manager)
+
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        mock_session.read_registers = AsyncMock(return_value={"sp": 0x20001000})
+        # Frame data + fault registers
+        frame_data = (
+            b"\x00\x00\x00\x00"
+            b"\x01\x00\x00\x00"
+            b"\x02\x00\x00\x00"
+            b"\x03\x00\x00\x00"
+            b"\x0c\x00\x00\x00"
+            b"\x00\x10\x00\x08"
+            b"\x34\x12\x00\x08"
+            b"\x00\x00\x00\x01"
+        )
+        # analyze_crash calls read_fault_state, decode_exception_frame, check_interrupt_config
+        # Each needs multiple memory reads. Use return_value instead of side_effect
+        # to handle arbitrary number of calls.
+        mock_session.read_memory = AsyncMock(
+            return_value=bytes([0x00, 0x00, 0x00, 0x00])
+        )
+
+        with patch(
+            "unconcealer.mcp.session_manager.DebugSession",
+            return_value=mock_session,
+        ):
+            await manager.start_session(str(elf_file), cpu="cortex-m3")
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "analyze_crash", "arguments": {}},
+            }
+
+            response = await server._handle_request(request)
+
+            assert "is_error" not in response["result"]
+            text = response["result"]["content"][0]["text"]
+            assert "Crash Analysis" in text
+            assert "Fault:" in text

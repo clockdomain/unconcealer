@@ -367,6 +367,76 @@ class StdioMcpServer:
                     "required": ["name"],
                 },
             },
+            # Architecture-specific tools
+            {
+                "name": "read_fault_registers",
+                "description": "Read and decode fault/exception registers. For ARM Cortex-M: CFSR, HFSR, MMFAR, BFAR. For RISC-V: mcause, mtval, mepc.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session": {
+                            "type": "string",
+                            "description": "Session name",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "read_exception_frame",
+                "description": "Parse the stacked exception/trap frame from the stack. Returns registers saved during exception entry.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "stack_pointer": {
+                            "type": "string",
+                            "description": "Stack pointer address (hex). Uses current SP if not specified.",
+                        },
+                        "session": {
+                            "type": "string",
+                            "description": "Session name",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "check_interrupt_priorities",
+                "description": "Check interrupt controller configuration and detect issues. For ARM: checks NVIC priorities (e.g., PendSV vs SVCall). For RISC-V: checks PLIC/MIE configuration.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session": {
+                            "type": "string",
+                            "description": "Session name",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "show_memory_protection",
+                "description": "Display memory protection configuration. For ARM: shows MPU regions. For RISC-V: shows PMP entries.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session": {
+                            "type": "string",
+                            "description": "Session name",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "analyze_crash",
+                "description": "Perform comprehensive crash analysis. Reads fault state, exception frame, and interrupt configuration to diagnose the crash cause.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session": {
+                            "type": "string",
+                            "description": "Session name",
+                        },
+                    },
+                },
+            },
         ]
 
     def _get_session(self, args: Dict[str, Any]):
@@ -382,6 +452,14 @@ class StdioMcpServer:
             if not session:
                 raise ValueError("No active session. Use start_session first.")
             return session
+
+    def _get_architecture(self, args: Dict[str, Any]):
+        """Get architecture handler for session."""
+        session_name = args.get("session")
+        arch = self.session_manager.get_architecture(session_name)
+        if not arch:
+            raise ValueError("No active session. Use start_session first.")
+        return arch
 
     async def _handle_tool_call(
         self, name: str, args: Dict[str, Any]
@@ -577,6 +655,103 @@ class StdioMcpServer:
                     return _text_response(
                         f"Failed to load snapshot '{snapshot_name}'", is_error=True
                     )
+
+            # Architecture-specific tools
+            elif name == "read_fault_registers":
+                arch = self._get_architecture(args)
+                fault = await arch.read_fault_state(session)
+                lines = [f"Fault Type: {fault.fault_type}"]
+                if fault.fault_address is not None:
+                    lines.append(
+                        f"Fault Address: 0x{fault.fault_address:08x}"
+                        f" {'(valid)' if fault.is_valid else '(invalid)'}"
+                    )
+                lines.append("\nRaw Registers:")
+                for reg, val in fault.raw_registers.items():
+                    lines.append(f"  {reg}: 0x{val:08x}")
+                if fault.decoded:
+                    lines.append("\nDecoded:")
+                    for bit, msg in fault.decoded.items():
+                        lines.append(f"  {bit}: {msg}")
+                return _text_response("\n".join(lines))
+
+            elif name == "read_exception_frame":
+                arch = self._get_architecture(args)
+                sp_str = args.get("stack_pointer")
+                sp = int(sp_str, 0) if sp_str else None
+                frame = await arch.decode_exception_frame(session, sp)
+                lines = [f"Exception Frame ({frame.frame_type}):"]
+                lines.append(f"  Return Address: 0x{frame.return_address:08x}")
+                lines.append(f"  Stack Pointer: 0x{frame.stack_pointer:08x}")
+                lines.append("\nStacked Registers:")
+                for reg, val in sorted(frame.registers.items()):
+                    lines.append(f"  {reg:>6}: 0x{val:08x}")
+                return _text_response("\n".join(lines))
+
+            elif name == "check_interrupt_priorities":
+                arch = self._get_architecture(args)
+                analysis = await arch.check_interrupt_config(session)
+                lines = ["Interrupt Configuration:"]
+                if analysis.priorities:
+                    lines.append("\nPriorities:")
+                    for name_p, pri in sorted(analysis.priorities.items()):
+                        lines.append(f"  {name_p}: {pri}")
+                if analysis.enabled:
+                    lines.append(f"\nEnabled: {len(analysis.enabled)} interrupts")
+                    for info in analysis.enabled[:10]:  # Show first 10
+                        lines.append(f"  {info.name}")
+                if analysis.pending:
+                    lines.append(f"\nPending: {len(analysis.pending)} interrupts")
+                    for info in analysis.pending:
+                        lines.append(f"  {info.name}")
+                if analysis.warnings:
+                    lines.append("\n⚠️  Warnings:")
+                    for warn in analysis.warnings:
+                        lines.append(f"  - {warn}")
+                return _text_response("\n".join(lines))
+
+            elif name == "show_memory_protection":
+                arch = self._get_architecture(args)
+                config = await arch.get_memory_protection(session)
+                lines = [f"Memory Protection: {'Enabled' if config.enabled else 'Disabled'}"]
+                lines.append(f"Default permissions: {config.default_permissions}")
+                if config.regions:
+                    lines.append(f"\nRegions ({len(config.regions)}):")
+                    for region in config.regions:
+                        lines.append(
+                            f"  [{region.number}] 0x{region.base_address:08x} "
+                            f"size={region.size:#x} {region.permissions}"
+                        )
+                else:
+                    lines.append("\nNo regions configured")
+                return _text_response("\n".join(lines))
+
+            elif name == "analyze_crash":
+                arch = self._get_architecture(args)
+                analysis = await arch.analyze_crash(session)
+                lines = [f"Crash Analysis ({analysis['architecture']})", "=" * 40]
+
+                # Fault info
+                fault = analysis["fault"]
+                lines.append(f"\nFault: {fault['fault_type']}")
+                if fault["fault_address"]:
+                    lines.append(f"Address: {fault['fault_address']}")
+                if fault["decoded"]:
+                    for bit, msg in fault["decoded"].items():
+                        lines.append(f"  {bit}: {msg}")
+
+                # Exception frame
+                frame = analysis["exception_frame"]
+                lines.append(f"\nReturn Address: {frame['return_address']}")
+
+                # Warnings
+                interrupts = analysis["interrupts"]
+                if interrupts["warnings"]:
+                    lines.append("\n⚠️  Issues Detected:")
+                    for warn in interrupts["warnings"]:
+                        lines.append(f"  - {warn}")
+
+                return _text_response("\n".join(lines))
 
             else:
                 return _text_response(f"Unknown tool: {name}", is_error=True)

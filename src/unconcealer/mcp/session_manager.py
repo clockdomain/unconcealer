@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 
 from unconcealer.core.session import DebugSession
 from unconcealer.tools.qemu_control import QEMUConfig
+from unconcealer.arch import detect_architecture, get_architecture, TargetArchitecture
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class SessionInfo:
     machine: str
     cpu: str
     gdb_port: int
+    architecture: str = "cortex-m"
     created_at: datetime = field(default_factory=datetime.now)
     session: Optional[DebugSession] = None
     is_active: bool = False
@@ -186,6 +188,9 @@ class SessionManager:
                 logger.error(f"Failed to start session '{name}': {e}")
                 raise RuntimeError(f"Failed to start session: {e}")
 
+            # Detect architecture
+            arch_name = detect_architecture(cpu, machine)
+
             # Register session
             info = SessionInfo(
                 name=name,
@@ -193,6 +198,7 @@ class SessionManager:
                 machine=machine,
                 cpu=cpu,
                 gdb_port=port,
+                architecture=arch_name,
                 session=session,
                 is_active=True,
             )
@@ -301,6 +307,34 @@ class SessionManager:
         """
         return self._sessions.get(name)
 
+    def get_architecture(self, name: Optional[str] = None) -> Optional[TargetArchitecture]:
+        """Get architecture handler for a session.
+
+        Args:
+            name: Session name (uses current if not specified)
+
+        Returns:
+            TargetArchitecture instance or None
+        """
+        if name is None:
+            name = self._current_name
+        if name is None:
+            return None
+
+        info = self._sessions.get(name)
+        if info is None:
+            return None
+
+        return get_architecture(info.architecture)
+
+    def get_current_architecture(self) -> Optional[TargetArchitecture]:
+        """Get architecture handler for current session.
+
+        Returns:
+            TargetArchitecture instance or None
+        """
+        return self.get_architecture(self._current_name)
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize session manager state.
 
@@ -316,6 +350,7 @@ class SessionManager:
                     "machine": info.machine,
                     "cpu": info.cpu,
                     "gdb_port": info.gdb_port,
+                    "architecture": info.architecture,
                     "created_at": info.created_at.isoformat(),
                     "is_active": info.is_active,
                 }
