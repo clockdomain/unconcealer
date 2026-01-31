@@ -1,8 +1,148 @@
-# Agentic Embedded Debugger
+# Unconcealer - AI-Powered Embedded Debugger
 ## Claude Desktop Integration Guide
 
-**Version:** 1.0  
+**Version:** 2.0
 **Date:** January 2026
+
+---
+
+## Quick Start Guide
+
+This section gets you from zero to debugging in 10 minutes.
+
+### Step 1: Install System Dependencies
+
+```bash
+# Ubuntu/Debian/WSL
+sudo apt update
+sudo apt install -y \
+    qemu-system-arm \
+    qemu-system-misc \
+    gdb-multiarch \
+    python3-pip \
+    python3-venv \
+    git
+
+# macOS (with Homebrew)
+brew install qemu python@3.11 git
+
+# Verify QEMU and GDB are installed
+qemu-system-arm --version
+gdb-multiarch --version
+```
+
+### Step 2: Clone and Install Unconcealer
+
+```bash
+# Clone the repository
+git clone https://github.com/anthropics/unconcealer.git
+cd unconcealer
+
+# Create and activate virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+# or: .venv\Scripts\activate  # Windows
+
+# Install in development mode
+pip install -e .
+
+# Verify installation
+unconcealer --help
+unconcealer mcp-server --help
+```
+
+### Step 3: Configure Claude Desktop
+
+Find your Claude Desktop config file:
+
+| OS | Location |
+|----|----------|
+| **Linux** | `~/.config/Claude/claude_desktop_config.json` |
+| **macOS** | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| **Windows** | `%APPDATA%\Claude\claude_desktop_config.json` |
+
+Create or edit the file with:
+
+```json
+{
+  "mcpServers": {
+    "unconcealer": {
+      "command": "/path/to/unconcealer/.venv/bin/python",
+      "args": ["-m", "unconcealer.cli", "mcp-server"],
+      "env": {
+        "DEBUGGER_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
+```
+
+> **Important:** Replace `/path/to/unconcealer` with your actual clone path.
+>
+> Example for Linux: `"/home/youruser/unconcealer/.venv/bin/python"`
+
+**Restart Claude Desktop** (quit completely and reopen).
+
+### Step 4: Test Drive with Sample Firmware
+
+The repository includes a pre-built test firmware at:
+```
+test_fw/target/thumbv7m-none-eabi/release/test_fw
+```
+
+Open Claude Desktop and try:
+
+```
+You: I want to test the embedded debugger. Load the test firmware at
+     /path/to/unconcealer/test_fw/target/thumbv7m-none-eabi/release/test_fw
+     It's for Cortex-M3.
+```
+
+Claude will:
+1. Start QEMU with the lm3s6965evb machine
+2. Load the test firmware
+3. Connect GDB
+
+Then try these commands:
+
+```
+You: Show me the registers
+
+You: Read memory at the COUNTER variable
+
+You: Set a breakpoint at test_function and run
+
+You: What's the value of COUNTER now?
+
+You: Save a snapshot called "test1"
+
+You: Continue running for a bit, then check COUNTER again
+
+You: Go back to snapshot "test1" - what's COUNTER now?
+
+You: Read the fault registers (there shouldn't be any faults)
+
+You: Stop the session
+```
+
+### Step 5: Verify Everything Works
+
+If all commands work, you're ready to debug your own firmware.
+
+**Troubleshooting quick checks:**
+
+```bash
+# Is the MCP server starting?
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | \
+    python -m unconcealer.cli mcp-server 2>/dev/null
+
+# Expected: JSON response with "unconcealer" server info
+
+# Is QEMU working?
+qemu-system-arm -machine lm3s6965evb -nographic -kernel \
+    test_fw/target/thumbv7m-none-eabi/release/test_fw &
+# Should start without errors (kill with: pkill qemu-system-arm)
+```
 
 ---
 
@@ -44,6 +184,7 @@ This guide explains how to use the Agentic Embedded Debugger through **Claude De
 
 ## Table of Contents
 
+- [Quick Start Guide](#quick-start-guide) ← **Start here!**
 1. [Prerequisites](#1-prerequisites)
 2. [Installation](#2-installation)
 3. [Configuration](#3-configuration)
@@ -52,6 +193,7 @@ This guide explains how to use the Agentic Embedded Debugger through **Claude De
 6. [Example Sessions](#6-example-sessions)
 7. [Troubleshooting](#7-troubleshooting)
 8. [Architecture](#8-architecture)
+- [Appendix: Test Firmware](#appendix-test-firmware)
 
 ---
 
@@ -92,7 +234,7 @@ This guide explains how to use the Agentic Embedded Debugger through **Claude De
 ### Step 1: Install System Dependencies
 
 ```bash
-# Ubuntu/Debian
+# Ubuntu/Debian/WSL
 sudo apt update
 sudo apt install -y \
     qemu-system-arm \
@@ -100,7 +242,8 @@ sudo apt install -y \
     gdb-multiarch \
     gcc-arm-none-eabi \
     python3-pip \
-    python3-venv
+    python3-venv \
+    git
 
 # macOS (with Homebrew)
 brew install qemu arm-none-eabi-gcc python@3.11
@@ -110,15 +253,19 @@ qemu-system-arm --version
 gdb-multiarch --version
 ```
 
-### Step 2: Install the Debugger
+### Step 2: Install from Git
 
 ```bash
-# Option A: From PyPI (when published)
-pip install agentic-debugger
+# Clone the repository
+git clone https://github.com/anthropics/unconcealer.git
+cd unconcealer
 
-# Option B: From source
-git clone https://github.com/your-org/agentic-debugger.git
-cd agentic-debugger
+# Create virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate   # Windows
+
+# Install in development mode
 pip install -e .
 ```
 
@@ -126,10 +273,15 @@ pip install -e .
 
 ```bash
 # Check the debugger is installed
-agentic-debugger --version
+unconcealer --version
 
 # Check MCP server starts
-agentic-debugger mcp-server --help
+unconcealer mcp-server --help
+
+# Quick protocol test
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | \
+    python -m unconcealer.cli mcp-server 2>/dev/null
+# Should output JSON with server info
 ```
 
 ---
@@ -151,9 +303,9 @@ Edit (or create) the config file:
 ```json
 {
   "mcpServers": {
-    "embedded-debugger": {
-      "command": "agentic-debugger",
-      "args": ["mcp-server"],
+    "unconcealer": {
+      "command": "/path/to/unconcealer/.venv/bin/python",
+      "args": ["-m", "unconcealer.cli", "mcp-server"],
       "env": {
         "DEBUGGER_LOG_LEVEL": "INFO"
       }
@@ -162,28 +314,44 @@ Edit (or create) the config file:
 }
 ```
 
-### Step 3: Restart Claude Desktop
+> **Important:** Replace `/path/to/unconcealer` with your actual installation path.
+> Use the full path to the Python executable in your virtual environment.
 
-Close and reopen Claude Desktop. You should see "embedded-debugger" in the MCP servers list (click the 🔌 icon).
-
-### Optional: Custom Configuration
-
-For advanced setups:
+**Alternative:** If you installed globally (not recommended):
 
 ```json
 {
   "mcpServers": {
-    "embedded-debugger": {
-      "command": "agentic-debugger",
+    "unconcealer": {
+      "command": "unconcealer",
+      "args": ["mcp-server"]
+    }
+  }
+}
+```
+
+### Step 3: Restart Claude Desktop
+
+Close and reopen Claude Desktop completely. You should see "unconcealer" in the MCP servers list (click the 🔌 icon or hammer icon).
+
+### Optional: Custom Configuration
+
+For advanced setups with custom paths:
+
+```json
+{
+  "mcpServers": {
+    "unconcealer": {
+      "command": "/path/to/unconcealer/.venv/bin/python",
       "args": [
-        "mcp-server",
+        "-m", "unconcealer.cli", "mcp-server",
         "--gdb-path", "/opt/arm-toolchain/bin/arm-none-eabi-gdb",
-        "--qemu-path", "/usr/local/bin/qemu-system-arm",
-        "--workspace", "/home/user/firmware-projects"
+        "--qemu-arm-path", "/usr/local/bin/qemu-system-arm",
+        "--qemu-riscv32-path", "/usr/local/bin/qemu-system-riscv32"
       ],
       "env": {
         "DEBUGGER_LOG_LEVEL": "DEBUG",
-        "DEBUGGER_SNAPSHOT_DIR": "/tmp/debugger-snapshots"
+        "DEBUGGER_SNAPSHOT_DIR": "/tmp/unconcealer-snapshots"
       }
     }
   }
@@ -769,26 +937,36 @@ pipeline behavior with respect to system register updates.
 
 ### MCP Server Not Appearing in Claude Desktop
 
-**Symptom:** No "embedded-debugger" in the MCP server list
+**Symptom:** No "unconcealer" in the MCP server list
 
 **Solutions:**
 
 1. Check config file syntax:
 ```bash
-# Validate JSON
+# Validate JSON (macOS)
 python3 -m json.tool < ~/Library/Application\ Support/Claude/claude_desktop_config.json
+
+# Linux
+python3 -m json.tool < ~/.config/Claude/claude_desktop_config.json
 ```
 
 2. Check the debugger is installed:
 ```bash
-which agentic-debugger
-agentic-debugger --version
+# If using virtual environment
+/path/to/unconcealer/.venv/bin/python -m unconcealer.cli --help
+
+# Or if installed globally
+which unconcealer
+unconcealer --version
 ```
 
 3. Check server starts manually:
 ```bash
-agentic-debugger mcp-server --verbose
-# Should print "MCP server starting on stdio..."
+# Test MCP protocol directly
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | \
+    python -m unconcealer.cli mcp-server 2>/dev/null
+
+# Should output JSON with "unconcealer" server info
 ```
 
 4. Restart Claude Desktop completely (quit and reopen)
@@ -842,10 +1020,10 @@ arm-none-eabi-gdb --version
 ```json
 {
   "mcpServers": {
-    "embedded-debugger": {
-      "command": "agentic-debugger",
+    "unconcealer": {
+      "command": "/path/to/unconcealer/.venv/bin/python",
       "args": [
-        "mcp-server",
+        "-m", "unconcealer.cli", "mcp-server",
         "--gdb-path", "/usr/bin/gdb-multiarch"
       ]
     }
@@ -870,9 +1048,11 @@ df -h /tmp
 ```json
 {
   "mcpServers": {
-    "embedded-debugger": {
+    "unconcealer": {
+      "command": "/path/to/unconcealer/.venv/bin/python",
+      "args": ["-m", "unconcealer.cli", "mcp-server"],
       "env": {
-        "DEBUGGER_SNAPSHOT_DIR": "/path/with/space"
+        "DEBUGGER_SNAPSHOT_DIR": "/path/with/more/space"
       }
     }
   }
@@ -910,12 +1090,12 @@ Enable debug logging to diagnose issues:
 ```json
 {
   "mcpServers": {
-    "embedded-debugger": {
-      "command": "agentic-debugger",
-      "args": ["mcp-server", "--verbose"],
+    "unconcealer": {
+      "command": "/path/to/unconcealer/.venv/bin/python",
+      "args": ["-m", "unconcealer.cli", "mcp-server", "--verbose"],
       "env": {
         "DEBUGGER_LOG_LEVEL": "DEBUG",
-        "DEBUGGER_LOG_FILE": "/tmp/debugger.log"
+        "DEBUGGER_LOG_FILE": "/tmp/unconcealer.log"
       }
     }
   }
@@ -924,7 +1104,7 @@ Enable debug logging to diagnose issues:
 
 Then check the log:
 ```bash
-tail -f /tmp/debugger.log
+tail -f /tmp/unconcealer.log
 ```
 
 ---
@@ -954,7 +1134,7 @@ tail -f /tmp/debugger.log
                                     ▼
 ┌───────────────────────────────────────────────────────────────────────────────┐
 │                            MCP SERVER                                         │
-│                       (agentic-debugger mcp-server)                           │
+│                     (unconcealer mcp-server)                                  │
 │                                                                               │
 │   ┌─────────────────────────────────────────────────────────────────────────┐│
 │   │                         Tool Handlers                                    ││
@@ -1136,4 +1316,72 @@ tail -f /tmp/debugger.log
 
 ---
 
-*Document Version 1.0 — January 2026*
+---
+
+## Appendix: Test Firmware
+
+The repository includes a pre-built test firmware for validation:
+
+```
+test_fw/target/thumbv7m-none-eabi/release/test_fw
+```
+
+### What the Test Firmware Does
+
+The test firmware (`test_fw/src/main.rs`) is a minimal Cortex-M3 program that:
+
+1. Initializes a `TEST_VALUE` variable to `0x12345678`
+2. Runs an infinite loop incrementing a `COUNTER` variable
+3. Includes a `test_function()` you can set breakpoints on
+4. Has a `trigger_hardfault()` function to test crash analysis
+
+### Test Commands to Try
+
+```
+# Basic session
+"Load test_fw/target/thumbv7m-none-eabi/release/test_fw for Cortex-M3"
+"Show me the registers"
+"Read 16 bytes at address 0x20000000"
+
+# Breakpoints and stepping
+"Set a breakpoint at main"
+"Set a breakpoint at test_function"
+"Continue until we hit test_function"
+"Show the backtrace"
+
+# Memory inspection
+"What's the value of COUNTER?"
+"Watch the COUNTER variable change over a few iterations"
+
+# Snapshots (time travel)
+"Save snapshot as before_loop"
+"Continue for a while"
+"What's COUNTER now?"
+"Restore to before_loop"
+"What's COUNTER now?" (should be back to earlier value)
+
+# Architecture-specific analysis
+"Read the fault registers"
+"Check interrupt priorities"
+"Show memory protection configuration"
+```
+
+### Rebuilding the Test Firmware
+
+If you need to rebuild (requires Rust):
+
+```bash
+cd test_fw
+
+# Install ARM target
+rustup target add thumbv7m-none-eabi
+
+# Build
+cargo build --release
+
+# Output at: target/thumbv7m-none-eabi/release/test_fw
+```
+
+---
+
+*Document Version 2.0 — January 2026*
