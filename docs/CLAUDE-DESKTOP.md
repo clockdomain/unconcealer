@@ -193,6 +193,7 @@ This guide explains how to use the Agentic Embedded Debugger through **Claude De
 6. [Example Sessions](#6-example-sessions)
 7. [Troubleshooting](#7-troubleshooting)
 8. [Architecture](#8-architecture)
+- [Appendix: Quick Reference](#appendix-quick-reference)
 - [Appendix: Test Firmware](#appendix-test-firmware)
 
 ---
@@ -1313,8 +1314,6 @@ tail -f /tmp/unconcealer.log
 "Save a report of this session"
 "Clean up and exit"
 ```
-
----
 
 ---
 
