@@ -34,9 +34,8 @@ fn main() -> ! {
             asm::nop();
         }
 
-        // Trigger a breakpoint for testing (optional)
-        // Uncomment to test breakpoint handling:
-        // asm::bkpt();
+        // Test fault handling:
+        trigger_hardfault();
     }
 }
 

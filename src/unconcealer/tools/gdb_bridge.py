@@ -63,8 +63,21 @@ class GDBBridge:
     # === Lifecycle Methods ===
 
     async def start(self) -> None:
-        """Start GDB process."""
-        self.gdb = GdbController([self.gdb_path, "--interpreter=mi3"])
+        """Start GDB process.
+
+        Raises:
+            RuntimeError: If GDB is not found or fails to start
+        """
+        try:
+            self.gdb = GdbController([self.gdb_path, "--interpreter=mi3"])
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"GDB not found at '{self.gdb_path}'\n"
+                f"Try: --gdb-path /path/to/gdb-multiarch\n"
+                f"Or install: sudo apt install gdb-multiarch"
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to start GDB: {e}")
 
     async def connect(self, host: str = "localhost", port: int = 1234) -> bool:
         """Connect to remote target (e.g., QEMU gdbstub).
@@ -75,11 +88,20 @@ class GDBBridge:
 
         Returns:
             True if connected successfully
+
+        Raises:
+            RuntimeError: If connection fails with actionable hints
         """
         if not self.gdb:
             await self.start()
         response = self._write(f"-target-select remote {host}:{port}")
         self.connected = self._check_success(response)
+        if not self.connected:
+            raise RuntimeError(
+                f"Failed to connect GDB to {host}:{port}\n"
+                f"Check that QEMU is running with -gdb tcp::{port}\n"
+                f"Check for port conflicts: lsof -i :{port}"
+            )
         return self.connected
 
     async def load_symbols(self, elf_path: str) -> bool:
@@ -90,9 +112,18 @@ class GDBBridge:
 
         Returns:
             True if symbols loaded successfully
+
+        Raises:
+            RuntimeError: If ELF file cannot be loaded
         """
         response = self._write(f"-file-exec-and-symbols {elf_path}")
-        return self._check_success(response)
+        if not self._check_success(response):
+            raise RuntimeError(
+                f"Failed to load ELF file: {elf_path}\n"
+                f"Check that the file exists and is a valid ELF binary\n"
+                f"Verify with: file {elf_path}"
+            )
+        return True
 
     async def close(self) -> None:
         """Close GDB connection and exit."""

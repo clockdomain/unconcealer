@@ -57,11 +57,7 @@ class DebugSession:
         self.gdb = GDBBridge(self.gdb_path)
         await self.gdb.start()
         await self.gdb.load_symbols(self.elf_path)
-        connected = await self.gdb.connect(port=self.qemu_config.gdb_port)
-
-        if not connected:
-            await self.stop()
-            raise RuntimeError("Failed to connect GDB to QEMU")
+        await self.gdb.connect(port=self.qemu_config.gdb_port)
 
         self._started = True
         return True

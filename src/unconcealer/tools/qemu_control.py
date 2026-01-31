@@ -96,7 +96,16 @@ class QEMUController:
                 stderr=subprocess.PIPE,
             )
         except FileNotFoundError:
-            raise RuntimeError(f"QEMU not found: {self.config.qemu_path}")
+            raise RuntimeError(
+                f"QEMU not found at '{self.config.qemu_path}'\n"
+                f"Try: --qemu-arm-path /path/to/qemu-system-arm\n"
+                f"Or install: sudo apt install qemu-system-arm"
+            )
+        except PermissionError:
+            raise RuntimeError(
+                f"Permission denied running QEMU at '{self.config.qemu_path}'\n"
+                f"Check that the file is executable: chmod +x {self.config.qemu_path}"
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to start QEMU: {e}")
 

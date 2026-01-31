@@ -235,7 +235,7 @@ class AgentOrchestrator:
             # Use default Claude path via claude-agent-sdk
             options = self._build_options(**kwargs)
 
-            async for message in query(full_prompt, options=options):
+            async for message in query(prompt=full_prompt, options=options):
                 if hasattr(message, 'content'):
                     for block in message.content:
                         if hasattr(block, 'text'):
@@ -284,7 +284,7 @@ class AgentOrchestrator:
             # Use default Claude path
             options = self._build_options(**kwargs)
 
-            async for message in query(full_prompt, options=options):
+            async for message in query(prompt=full_prompt, options=options):
                 if hasattr(message, 'content'):
                     for block in message.content:
                         if hasattr(block, 'text'):

@@ -46,9 +46,8 @@ source .venv/bin/activate  # Linux/macOS
 # Install in development mode
 pip install -e .
 
-# Verify installation
-unconcealer --help
-unconcealer mcp-server --help
+# Verify installation and dependencies
+unconcealer doctor
 ```
 
 ### Step 3: Configure Claude Desktop
@@ -276,6 +275,9 @@ pip install -e .
 # Check the debugger is installed
 unconcealer --version
 
+# Run the doctor command to verify all dependencies
+unconcealer doctor
+
 # Check MCP server starts
 unconcealer mcp-server --help
 
@@ -425,65 +427,46 @@ When you configure the MCP server, these tools become available to Claude:
 | Tool | Description |
 |------|-------------|
 | `continue_execution` | Run until breakpoint/fault |
-| `step` | Single-step (into, over, out) |
+| `step` | Single-step (source or instruction level) |
+| `step_over` | Step over function calls |
 | `halt` | Stop execution immediately |
 | `reset` | Reset target to initial state |
 
-### Breakpoints & Watchpoints
+### Breakpoints
 
 | Tool | Description |
 |------|-------------|
-| `set_breakpoint` | Set breakpoint at location |
-| `set_watchpoint` | Watch memory for changes |
-| `delete_breakpoint` | Remove breakpoint |
-| `list_breakpoints` | Show all breakpoints |
+| `set_breakpoint` | Set breakpoint at function, file:line, or *address |
+| `delete_breakpoint` | Remove a breakpoint by number |
 
 ### Inspection
 
 | Tool | Description |
 |------|-------------|
-| `read_registers` | Read CPU registers |
-| `read_memory` | Read memory contents |
-| `backtrace` | Get stack trace |
-| `list_locals` | Show local variables |
-| `disassemble` | Show assembly code |
+| `read_registers` | Read CPU registers (all or specific) |
+| `read_memory` | Read memory at address or symbol (hex dump) |
+| `write_memory` | Write bytes to memory |
+| `backtrace` | Get stack trace with symbols |
+| `evaluate` | Evaluate a C expression |
 
-### Cortex-M Specific
-
-| Tool | Description |
-|------|-------------|
-| `read_fault_registers` | Read CFSR, HFSR, MMFAR, BFAR |
-| `read_exception_frame` | Parse stacked exception frame |
-| `check_exception_priorities` | Verify NVIC priorities |
-| `show_nvic` | Display interrupt configuration |
-| `show_mpu` | Display MPU configuration |
-
-### Analysis
+### Architecture-Specific (ARM Cortex-M / RISC-V)
 
 | Tool | Description |
 |------|-------------|
-| `build_causal_chain` | Trace fault to root cause |
-| `validate_fix_hypothesis` | Test fix without code changes |
-| `test_fix_removal` | Check if fix is harmful |
-| `find_corruption_iteration` | Binary search for timing bugs |
-| `track_register_changes` | Monitor register modifications |
-| `check_barrier_usage` | Static analysis for missing barriers |
+| `read_fault_registers` | ARM: CFSR, HFSR, MMFAR, BFAR. RISC-V: mcause, mtval, mepc |
+| `read_exception_frame` | Parse stacked exception/trap frame |
+| `check_interrupt_priorities` | Check NVIC (ARM) or PLIC/MIE (RISC-V) configuration |
+| `show_memory_protection` | Show MPU (ARM) or PMP (RISC-V) regions |
+| `analyze_crash` | Comprehensive crash analysis combining fault state, frame, and interrupts |
 
 ### Snapshots
 
 | Tool | Description |
 |------|-------------|
 | `save_snapshot` | Save full VM state |
-| `restore_snapshot` | Restore to saved state |
-| `list_snapshots` | Show available snapshots |
-| `delete_snapshot` | Remove a snapshot |
+| `load_snapshot` | Restore to saved state |
 
-### Comparative Debugging
-
-| Tool | Description |
-|------|-------------|
-| `add_comparison_target` | Add another architecture |
-| `compare_execution` | Run and diff multiple targets |
+> **Note:** Snapshot support depends on QEMU machine type. Some machines (like `lm3s6965evb`) have limited snapshot support.
 
 ---
 
@@ -549,35 +532,25 @@ Would you like me to show the source code around these locations?
 ╭─────────────────────────────────────────────────────────────────╮
 │ You                                                             │
 ╰─────────────────────────────────────────────────────────────────╯
-Yes, show me main.c around line 102
+Can you read the memory around the g_sensor pointer?
 
 ╭─────────────────────────────────────────────────────────────────╮
 │ Claude                                                          │
 ╰─────────────────────────────────────────────────────────────────╯
-[Calling: show_source]
-  file: main.c
-  line: 102
-  context: 10
+[Calling: evaluate]
+  expression: "&g_sensor"
 
-main.c:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 95 │ void main_loop(void) {
- 96 │     while (1) {
- 97 │         if (sensor_ready) {
- 98 │             // BUG: g_sensor might still be NULL here
- 99 │             // if init failed but sensor_ready was set
-100 │             // by an interrupt
-101 │             
-102 │             int value = sensor_read(g_sensor);  ← CRASH HERE
-103 │             process_reading(value);
-104 │         }
-105 │         sleep_until_interrupt();
-106 │     }
-107 │ }
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+g_sensor is at 0x20000100.
 
-The bug: `sensor_ready` flag can be set by an interrupt before
-`g_sensor` is initialized. You should check both conditions:
+[Calling: read_memory]
+  address: "0x20000100"
+  length: 8
+
+0x20000100: 00 00 00 00 ...
+
+The `g_sensor` pointer is NULL (0x00000000). The bug is that
+`sensor_ready` flag was set by an interrupt before `g_sensor`
+was initialized. You should check both conditions:
 
 ```c
 if (sensor_ready && g_sensor != NULL) {
@@ -628,105 +601,50 @@ a deterministic bug.
 Let me check the exception priorities — this is a common cause
 of IPC issues.
 
-[Calling: check_exception_priorities]
+[Calling: check_interrupt_priorities]
 
-⚠️ PROBLEM DETECTED:
+Interrupt Configuration:
 
-  Exception      Priority
-  ───────────────────────
-  SVCall         0x40 (64)
-  PendSV         0x00 (0)   ← WRONG
-  SysTick        0x80 (128)
+Priorities:
+  SVCall: 64
+  PendSV: 0
+  SysTick: 128
+
+⚠️  Warnings:
+  - PendSV priority (0) is higher than SVCall (64) - may cause preemption issues
 
 PendSV has HIGHER priority than SVCall (lower number = higher
 priority). This means PendSV can preempt SVCall handlers.
 
-This is almost certainly your bug. Let me build the causal chain.
+This is almost certainly your bug. Let me verify by reading the
+SHPR registers directly.
 
-[Calling: build_causal_chain]
-  symptom: "INVPC"
+[Calling: read_memory]
+  address: "0xE000ED20"
+  length: 4
 
-Causal Chain:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-INVPC fault (stacked PC corrupted)
-  └── Exception frame on wrong stack
-        └── CONTROL register has wrong value (0x02 instead of 0x03)
-              └── PendSV saved CONTROL during syscall elevation
-                    └── PendSV preempted SVCall ← ROOT CAUSE
-                          └── Priority misconfiguration
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+0xE000ED20: 00 00 40 00  (SHPR3 = PendSV:0x00, SVCall:0x40)
 
-Let me validate the fix before recommending it.
+The configuration confirms PendSV has highest priority (0x00).
+This causes PendSV to preempt SVCall handlers, corrupting the
+exception frame.
 
-[Calling: validate_fix_hypothesis]
-  description: "Set PendSV to lowest priority (0xFF)"
-  patches: [
-    {
-      address: "0xE000ED20",
-      original: "00000000",
-      patched: "00FF0000"
-    }
-  ]
-  test_iterations: 100
-
-Fix Validation Results:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Without fix: 31/100 passed (31%)
-With fix:    100/100 passed (100%) ✓
-
-New bugs introduced: None
-Recommendation: APPLY FIX
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✅ Validated fix. Add this to your RTOS initialization:
+✅ Fix: Add this to your RTOS initialization:
 
 ```c
 void rtos_init(void) {
     // PendSV must be lowest priority to avoid preempting syscalls
     NVIC_SetPriority(PendSV_IRQn, 0xFF);
-    
+
     // SVCall should be high priority
     NVIC_SetPriority(SVCall_IRQn, 0x00);
-    
+
     // ... rest of init
 }
 ```
 
-╭─────────────────────────────────────────────────────────────────╮
-│ You                                                             │
-╰─────────────────────────────────────────────────────────────────╯
-Where is the priority currently being set?
-
-╭─────────────────────────────────────────────────────────────────╮
-│ Claude                                                          │
-╰─────────────────────────────────────────────────────────────────╯
-[Calling: search_source]
-  pattern: "NVIC_SetPriority.*PendSV"
-
-[Calling: search_source]
-  pattern: "SHPR3"
-
-Found in src/kernel/port_cm3.c:
-
-```c
-// line 87-92
-void port_init(void) {
-    // Configure SVCall priority
-    NVIC_SetPriority(SVCall_IRQn, 0);
-    
-    // BUG: PendSV priority not set!
-    // Defaults to 0 (highest priority)
-}
-```
-
-The fix is simple — add line 93:
-
-```c
-void port_init(void) {
-    NVIC_SetPriority(SVCall_IRQn, 0);
-    NVIC_SetPriority(PendSV_IRQn, 0xFF);  // Add this line
-}
-```
+You can test this by using write_memory to patch the priority
+register at runtime, then re-run to verify.
 ```
 
 ---
@@ -841,95 +759,6 @@ SystemInit configured:
 • APB1 at 42 MHz, APB2 at 84 MHz
 
 This looks correct for an STM32F4 at full speed.
-```
-
----
-
-### Example 4: Comparative Debugging
-
-```
-╭─────────────────────────────────────────────────────────────────╮
-│ You                                                             │
-╰─────────────────────────────────────────────────────────────────╯
-My code works on the Cortex-M33 target but crashes on Cortex-M3.
-Can you compare them?
-
-ELF: ~/projects/portable/build/app.elf
-
-╭─────────────────────────────────────────────────────────────────╮
-│ Claude                                                          │
-╰─────────────────────────────────────────────────────────────────╯
-I'll run your firmware on both architectures and find where they
-diverge.
-
-[Calling: start_session]
-  elf_path: ~/projects/portable/build/app.elf
-  machine: mps2-an385
-  name: "cortex-m3"
-
-[Calling: add_comparison_target]
-  name: "cortex-m33"
-  machine: mps2-an505
-  elf_path: ~/projects/portable/build/app.elf
-
-Both targets loaded. Running comparative analysis...
-
-[Calling: compare_execution]
-  targets: ["cortex-m3", "cortex-m33"]
-  breakpoints: ["main", "syscall_entry", "syscall_exit"]
-  max_iterations: 50
-
-Comparative Analysis Results:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Targets converged through 23 iterations, then diverged.
-
-DIVERGENCE DETECTED at iteration 24:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Location: syscall_exit (0x08002340)
-
-  Register     Cortex-M3     Cortex-M33
-  ─────────────────────────────────────
-  CONTROL      0x02          0x03        ← DIFFERENT
-  PC           0x08002340    0x08002340
-  LR           0xFFFFFFFD    0xFFFFFFFD
-  
-Cortex-M3 has CONTROL=0x02 (privileged, PSP)
-Cortex-M33 has CONTROL=0x03 (unprivileged, PSP)
-
-On the next iteration, Cortex-M3 crashed.
-Cortex-M33 continued successfully.
-
-This suggests an architectural difference in how CONTROL is
-handled during exception return.
-
-Let me check for missing memory barriers...
-
-[Calling: check_barrier_usage]
-  elf_path: ~/projects/portable/build/app.elf
-
-⚠️ STATIC ANALYSIS WARNING:
-
-  File: src/kernel/syscall.c, Line 142
-  Issue: MSR CONTROL not followed by DSB+ISB
-  
-  The code writes to CONTROL but doesn't ensure the pipeline
-  sees the new value before continuing.
-  
-  ARMv8-M (Cortex-M33) handles this more gracefully.
-  ARMv7-M (Cortex-M3) requires explicit barriers.
-
-Fix:
-```c
-// syscall.c line 142
-__set_CONTROL(new_control);
-__DSB();  // Add this
-__ISB();  // Add this
-```
-
-This explains why it works on M33 but not M3 — different
-pipeline behavior with respect to system register updates.
 ```
 
 ---
@@ -1263,8 +1092,7 @@ tail -f /tmp/unconcealer.log
 "Set a breakpoint at main"
 "Break when we reach sensor_read"
 "Set a breakpoint at address 0x08001234"
-"Watch variable sensor_value for changes"
-"Delete all breakpoints"
+"Delete breakpoint 3"
 ```
 
 ### Inspection
@@ -1274,8 +1102,7 @@ tail -f /tmp/unconcealer.log
 "What's in R3?"
 "Show the backtrace"
 "What's at memory address 0x20000000?"
-"Disassemble the current function"
-"Show local variables"
+"Evaluate the expression sizeof(struct task)"
 ```
 
 ### Fault Analysis
@@ -1283,9 +1110,9 @@ tail -f /tmp/unconcealer.log
 ```
 "What caused this crash?"
 "Read the fault registers"
-"Explain this HardFault"
-"Check the exception priorities"
-"Is this a priority configuration issue?"
+"Analyze this crash"
+"Check the interrupt priorities"
+"Show the memory protection configuration"
 ```
 
 ### Snapshots
@@ -1293,18 +1120,6 @@ tail -f /tmp/unconcealer.log
 ```
 "Save this state as 'before-bug'"
 "Go back to the 'before-bug' snapshot"
-"List all snapshots"
-"Delete snapshot 'test'"
-```
-
-### Analysis
-
-```
-"Build a causal chain for this crash"
-"Why did the CONTROL register change?"
-"Validate this fix hypothesis"
-"Find when the corruption first occurred"
-"Compare behavior between Cortex-M3 and Cortex-M33"
 ```
 
 ### Session Management

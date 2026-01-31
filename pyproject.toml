@@ -58,6 +58,7 @@ rust = [
 [project.scripts]
 unconcealer = "unconcealer.cli:app"
 unc = "unconcealer.cli:app"  # Short alias
+unconcealer-cmd = "unconcealer.cmd:main"  # Single-command interface for Claude Code
 
 [project.urls]
 Homepage = "https://github.com/clockdomain/unconcealer"
