@@ -2,10 +2,8 @@
 target = "thumbv7m-none-eabi"
 
 [target.thumbv7m-none-eabi]
-linker = "arm-none-eabi-gcc"
 rustflags = [
     "-C", "link-arg=-Tlink.x",
-    "-C", "link-arg=-nostartfiles",
 ]
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
