@@ -19,6 +19,85 @@ app = typer.Typer(
 console = Console()
 
 
+# ============================================================================
+# MCP Server Command (for Claude Desktop integration)
+# ============================================================================
+
+
+@app.command(name="mcp-server")
+def mcp_server(
+    gdb_path: Optional[str] = typer.Option(
+        None,
+        "--gdb-path",
+        help="Path to GDB executable",
+        envvar="DEBUGGER_GDB_PATH",
+    ),
+    qemu_arm_path: Optional[str] = typer.Option(
+        None,
+        "--qemu-arm-path",
+        help="Path to qemu-system-arm",
+        envvar="DEBUGGER_QEMU_ARM_PATH",
+    ),
+    qemu_riscv32_path: Optional[str] = typer.Option(
+        None,
+        "--qemu-riscv32-path",
+        help="Path to qemu-system-riscv32",
+        envvar="DEBUGGER_QEMU_RISCV32_PATH",
+    ),
+    qemu_riscv64_path: Optional[str] = typer.Option(
+        None,
+        "--qemu-riscv64-path",
+        help="Path to qemu-system-riscv64",
+        envvar="DEBUGGER_QEMU_RISCV64_PATH",
+    ),
+    snapshot_dir: Optional[str] = typer.Option(
+        None,
+        "--snapshot-dir",
+        help="Directory for storing snapshots",
+        envvar="DEBUGGER_SNAPSHOT_DIR",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose logging",
+    ),
+) -> None:
+    """Run MCP server for Claude Desktop integration.
+
+    This command starts an MCP server that communicates over stdin/stdout,
+    allowing Claude Desktop to use the debugger tools.
+
+    Configure in Claude Desktop's config file:
+
+        {
+          "mcpServers": {
+            "embedded-debugger": {
+              "command": "unconcealer",
+              "args": ["mcp-server"]
+            }
+          }
+        }
+    """
+    from unconcealer.mcp import run_stdio_server
+
+    asyncio.run(
+        run_stdio_server(
+            gdb_path=gdb_path,
+            qemu_arm_path=qemu_arm_path,
+            qemu_riscv32_path=qemu_riscv32_path,
+            qemu_riscv64_path=qemu_riscv64_path,
+            snapshot_dir=snapshot_dir,
+            verbose=verbose,
+        )
+    )
+
+
+# ============================================================================
+# Provider Configuration
+# ============================================================================
+
+
 def _get_provider(
     provider_type: str,
     base_url: Optional[str],
